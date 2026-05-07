@@ -19,13 +19,15 @@
 #include "config.h"
 #include "pico/util/queue.h"
 
-#define MTU 672
+#define MTU_CONTROL 256
+#define MTU_INTERRUPT 1691
 
 using std::unordered_map;
 using std::vector;
 using std::queue;
 
 static void hci_packet_handler(uint8_t packet_type, uint16_t channel, uint8_t *packet, uint16_t size);
+
 static void l2cap_packet_handler(uint8_t packet_type, uint16_t channel, uint8_t *packet, uint16_t size);
 
 static btstack_packet_callback_registration_t hci_event_callback_registration, l2cap_event_callback_registration;
@@ -36,8 +38,10 @@ static hci_con_handle_t acl_handle = HCI_CON_HANDLE_INVALID;
 static uint16_t hid_control_cid;
 static uint16_t hid_interrupt_cid;
 static bt_data_callback_t bt_data_callback = nullptr;
+static bool check_dse = false;
 unordered_map<uint8_t, vector<uint8_t> > feature_data;
 queue_t send_fifo;
+
 struct send_element {
     uint8_t data[512];
     size_t len;
@@ -76,14 +80,14 @@ void bt_l2cap_init() {
     l2cap_add_event_handler(&l2cap_event_callback_registration);
     // 修复重连后自动断开的关键点
     sdp_init();
-    l2cap_register_service(l2cap_packet_handler, PSM_HID_CONTROL, MTU, LEVEL_2);
-    l2cap_register_service(l2cap_packet_handler, PSM_HID_INTERRUPT, MTU, LEVEL_2);
+    l2cap_register_service(l2cap_packet_handler, PSM_HID_CONTROL, MTU_CONTROL, LEVEL_2);
+    l2cap_register_service(l2cap_packet_handler, PSM_HID_INTERRUPT, MTU_INTERRUPT, LEVEL_2);
 
     l2cap_init();
 }
 
 int bt_init() {
-    queue_init(&send_fifo, sizeof(send_element), 2);
+    queue_init(&send_fifo, sizeof(send_element), 10);
 
     bt_l2cap_init();
 
@@ -270,10 +274,11 @@ static void hci_packet_handler(uint8_t packet_type, uint16_t channel, uint8_t *p
                 printf("[L2CAP] Open HID channels\n");
                 if (new_pair) {
                     if (hid_control_cid == 0) {
-                        l2cap_create_channel(l2cap_packet_handler, current_device_addr, PSM_HID_CONTROL, MTU,
+                        l2cap_create_channel(l2cap_packet_handler, current_device_addr, PSM_HID_CONTROL, MTU_CONTROL,
                                              &hid_control_cid);
                     } else if (hid_interrupt_cid == 0) {
-                        l2cap_create_channel(l2cap_packet_handler, current_device_addr, PSM_HID_INTERRUPT, MTU,
+                        l2cap_create_channel(l2cap_packet_handler, current_device_addr, PSM_HID_INTERRUPT,
+                                             MTU_INTERRUPT,
                                              &hid_interrupt_cid);
                     }
                 }
@@ -341,6 +346,15 @@ static void l2cap_packet_handler(uint8_t packet_type, uint16_t channel, uint8_t 
                 bt_disconnect();
             }
         } else if (channel == hid_control_cid) {
+            if (check_dse) {
+                check_dse = false;
+                if (packet[0] == 0x02) {
+                    is_dse = false;
+                }else if (size > 1){
+                    is_dse = true;
+                }
+                tud_connect();
+            }
             if (packet[0] == 0xA3) {
                 uint8_t report_id = packet[1];
                 feature_data[report_id].assign(packet + 1, packet + size);
@@ -389,7 +403,7 @@ static void l2cap_packet_handler(uint8_t packet_type, uint16_t channel, uint8_t 
                         // SetStateData
                         0xfd, 0xf7, 0x0, 0x0,
                         0x7f, 0x7f, // Headphones, Speaker
-                        0xff, 0x9, 0x0, 0xf, 0x0, 0x0, 0x0, 0x0,
+                        0xff, 0x9, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0,
                         0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0,
                         0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0,
                         0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0xa,
@@ -535,4 +549,9 @@ void init_feature() {
     get_feature_data(0x20, 64);
     get_feature_data(0x22, 64);
     get_feature_data(0x05, 41);
+    // DSE
+    // check DSE by request 0x70 feature report. DSE return DEFAULT
+    // If len == 1, it's DS5
+    check_dse = true;
+    get_feature_data(0x70, 64);
 }

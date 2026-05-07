@@ -28,6 +28,9 @@
 #include "config.h"
 
 bool ds_mode() {
+    if (get_config().controller_mode == 2) {
+        return !is_dse;
+    }
     return get_config().controller_mode == 0;
 }
 
@@ -57,7 +60,7 @@ tusb_desc_device_t desc_device =
 
     .iManufacturer = 0x01,
     .iProduct = 0x02,
-    .iSerialNumber = 0x03,
+    .iSerialNumber = 0x00,
 
     .bNumConfigurations = 0x01
 };

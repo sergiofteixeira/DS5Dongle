@@ -4,12 +4,13 @@
 
 #include "tusb.h"
 #include "bsp/board_api.h"
+#include "config.h"
 
 #include "bt.h"
 #include "usb.h"
 
 uint8_t mute[2]; // 0: SPEAKER(0x02) 1: MIC(0x05)
-float volume[2] = {1.0f}; // 0: SPEAKER(0x02) 1: MIC(0x05)
+float volume[2] = {-100.0f,0.0f}; // 0: SPEAKER(0x02) 1: MIC(0x05)
 
 static volatile bool s_usb_suspended = false;
 static volatile bool s_disconnect_requested = false;
@@ -71,7 +72,12 @@ static bool audio10_set_req_entity(tusb_control_request_t const *p_request, uint
                         // Only 1st form is supported
                         TU_VERIFY(p_request->wLength == 2);
 
-                        volume[index] = static_cast<float>(tu_unaligned_read16(pBuff)) / 256;
+                        volume[index] = static_cast<float>(*reinterpret_cast<int16_t const *>(pBuff)) / 256;
+                        if (entityID == UAC1_ENTITY_SPK_FEATURE_UNIT) {
+                            auto config = get_config();
+                            config.speaker_volume = volume[index];
+                            set_config(config);
+                        }
 
                         TU_LOG2("    Set Volume: %d dB of entity: %u\r\n", volume[index], entityID);
                         return true;
@@ -109,28 +115,49 @@ static bool audio10_get_req_entity(uint8_t rhport, tusb_control_request_t const 
                 switch (p_request->bRequest) {
                     case AUDIO10_CS_REQ_GET_CUR:
                         TU_LOG2("    Get Volume of entity: %u\r\n", entityID); {
-                            int16_t vol = volume[index];
-                            vol = vol * 256; // convert to 1/256 dB units
+                            if (entityID == UAC1_ENTITY_SPK_FEATURE_UNIT) {
+                                volume[index] = get_config().speaker_volume;
+                            }
+                            int16_t vol = volume[index] * 256; // convert to 1/256 dB units
                             return tud_audio_buffer_and_schedule_control_xfer(rhport, p_request, &vol, sizeof(vol));
                         }
 
                     case AUDIO10_CS_REQ_GET_MIN:
                         TU_LOG2("    Get Volume min of entity: %u\r\n", entityID); {
-                            int16_t min = 1; // 1 dB
-                            min = min * 256; // convert to 1/256 dB units
+                            uint8_t min[2];
+                            if (entityID == UAC1_ENTITY_SPK_FEATURE_UNIT) {
+                                min[0] = 0x00;
+                                min[1] = 0x9c;
+                            }else {
+                                min[0] = 0x00;
+                                min[1] = 0x00;
+                            }
                             return tud_audio_buffer_and_schedule_control_xfer(rhport, p_request, &min, sizeof(min));
                         }
 
                     case AUDIO10_CS_REQ_GET_MAX:
                         TU_LOG2("    Get Volume max of entity: %u\r\n", entityID); {
-                            int16_t max = 2; // 2 dB
-                            max = max * 256; // convert to 1/256 dB units
+                            uint8_t max[2];
+                            if (entityID == UAC1_ENTITY_SPK_FEATURE_UNIT) {
+                                max[0] = 0x00;
+                                max[1] = 0x00;
+                            }else {
+                                max[0] = 0x00;
+                                max[1] = 0x30;
+                            }
                             return tud_audio_buffer_and_schedule_control_xfer(rhport, p_request, &max, sizeof(max));
                         }
 
                     case AUDIO10_CS_REQ_GET_RES:
                         TU_LOG2("    Get Volume res of entity: %u\r\n", entityID); {
-                            int16_t res = 0.1 * 256; // 0.1 dB
+                            uint8_t res[2];
+                            if (entityID == UAC1_ENTITY_SPK_FEATURE_UNIT) {
+                                res[0] = 0x00;
+                                res[1] = 0x01;
+                            }else {
+                                res[0] = 0x7a;
+                                res[1] = 0x00;
+                            }
                             return tud_audio_buffer_and_schedule_control_xfer(rhport, p_request, &res, sizeof(res));
                         }
                     // Unknown/Unsupported control
