@@ -1,0 +1,5 @@
+# Enable USB remote wakeup for DS5Dongle (DualSense / DualSense Edge bridge)
+# Install to: /etc/udev/rules.d/99-ds5dongle-wakeup.rules
+
+ACTION=="add", SUBSYSTEM=="usb", ATTR{idVendor}=="054c", ATTR{idProduct}=="0ce6", TEST=="power/wakeup", ATTR{power/wakeup}="enabled"
+ACTION=="add", SUBSYSTEM=="usb", ATTR{idVendor}=="054c", ATTR{idProduct}=="0df2", TEST=="power/wakeup", ATTR{power/wakeup}="enabled"

@@ -169,19 +169,34 @@ void tud_hid_report_complete_cb(uint8_t instance, uint8_t const *report, uint16_
     (void) len;
 }
 
-extern "C" void tud_suspend_cb(bool remote_wakeup_en) {
-    (void) remote_wakeup_en;
+static volatile bool s_remote_wakeup_allowed = false;
+static volatile bool s_remote_wakeup_pending = false;
 
+extern "C" void tud_suspend_cb(bool remote_wakeup_en) {
     // TinyUSB callbacks can run in IRQ context. Defer BTstack calls to main loop.
     s_usb_suspended = true;
     s_disconnect_requested = true;
+
+    // Host signals whether remote wakeup is enabled for this configuration.
+    s_remote_wakeup_allowed = remote_wakeup_en;
 }
 
 extern "C" void tud_resume_cb(void) {
     s_usb_suspended = false;
+    s_remote_wakeup_pending = false;
+}
+
+void usb_remote_wakeup_request() {
+    s_remote_wakeup_pending = true;
 }
 
 void usb_pm_poll() {
+    // If we got input activity while suspended, request host wake.
+    if (tud_suspended() && s_remote_wakeup_allowed && s_remote_wakeup_pending) {
+        s_remote_wakeup_pending = false;
+        tud_remote_wakeup();
+    }
+
     if (!s_disconnect_requested) {
         return;
     }

@@ -77,6 +77,29 @@ void interrupt_loop() {
 void on_bt_data(CHANNEL_TYPE channel, uint8_t *data, uint16_t len) {
     // printf("[Main] BT data callback: channel=%u len=%u\n", channel, len);
     if (channel == INTERRUPT && data[1] == 0x31) {
+        if (len < 3 + sizeof(USBGetStateData)) {
+            return;
+        }
+
+        // Remote wakeup: only trigger on a real button press edge.
+        const auto pressed = [](USBGetStateData const &r) {
+            return r.DPad != static_cast<Direction>(8) ||
+                   r.ButtonSquare || r.ButtonCross || r.ButtonCircle || r.ButtonTriangle ||
+                   r.ButtonL1 || r.ButtonR1 || r.ButtonL2 || r.ButtonR2 ||
+                   r.ButtonCreate || r.ButtonOptions || r.ButtonL3 || r.ButtonR3 ||
+                   r.ButtonHome || r.ButtonPad || r.ButtonMute ||
+                   r.ButtonLeftFunction || r.ButtonRightFunction || r.ButtonLeftPaddle || r.ButtonRightPaddle;
+        };
+
+        USBGetStateData prev{};
+        USBGetStateData now{};
+        memcpy(&prev, interrupt_in_data, sizeof(prev));
+        memcpy(&now, data + 3, sizeof(now));
+
+        if (pressed(now) && !pressed(prev)) {
+            usb_remote_wakeup_request();
+        }
+
         if ((data[56] & 1) != (interrupt_in_data[53] & 1)) {
             set_headset(data[56] & 1);
         }

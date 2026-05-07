@@ -80,7 +80,7 @@ uint8_t descriptor_configuration[] = {
     0x04, // bNumInterfaces: 4
     0x01, // bConfigurationValue: 1
     0x00, // iConfiguration: 0
-    0xC0, // bmAttributes: SELF-POWERED, NO REMOTE-WAKEUP
+    0xE0, // bmAttributes: SELF-POWERED, REMOTE-WAKEUP
     0xFA, // bMaxPower: 500mA (250 * 2mA)
 
     // --- INTERFACE DESCRIPTOR (0.0): Audio Control ---
