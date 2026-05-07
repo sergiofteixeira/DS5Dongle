@@ -25,4 +25,7 @@ std::vector<uint8_t> get_feature_data(uint8_t reportId,uint16_t len);
 void init_feature();
 void set_feature_data(uint8_t reportId, uint8_t* data,uint16_t len);
 
+// True when the DualSense HID control/interrupt channels are open.
+bool bt_controller_connected();
+
 #endif //DS5_BRIDGE_BT_H

@@ -526,6 +526,10 @@ void set_feature_data(uint8_t reportId, uint8_t *data, uint16_t len) {
     }
 }
 
+bool bt_controller_connected() {
+    return hid_control_cid != 0 && hid_interrupt_cid != 0;
+}
+
 void init_feature() {
     get_feature_data(0x09, 20);
     get_feature_data(0x20, 64);

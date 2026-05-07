@@ -179,6 +179,10 @@ extern "C" void tud_suspend_cb(bool remote_wakeup_en) {
 
     // Host signals whether remote wakeup is enabled for this configuration.
     s_remote_wakeup_allowed = remote_wakeup_en;
+
+    // Clear any stale wake request so we don't immediately wake the host
+    // while it is trying to enter suspend.
+    s_remote_wakeup_pending = false;
 }
 
 extern "C" void tud_resume_cb(void) {
@@ -186,13 +190,37 @@ extern "C" void tud_resume_cb(void) {
     s_remote_wakeup_pending = false;
 }
 
+extern "C" void tud_mount_cb(void) {
+    // Host (re)enumerated us (e.g. after reboot). Ensure we don't keep stale suspend state.
+    s_usb_suspended = false;
+    s_remote_wakeup_allowed = false;
+    s_remote_wakeup_pending = false;
+    s_disconnect_requested = false;
+
+    // Avoid binding the host's DualSense drivers before we actually have a controller.
+    // We'll reconnect USB once the controller is connected.
+    if (!bt_controller_connected()) {
+        tud_disconnect();
+    }
+}
+
+extern "C" void tud_umount_cb(void) {
+    // Treat detach as not suspended; host is gone.
+    s_usb_suspended = false;
+    s_remote_wakeup_allowed = false;
+    s_remote_wakeup_pending = false;
+}
+
 void usb_remote_wakeup_request() {
-    s_remote_wakeup_pending = true;
+    // Only queue a remote wake when we're actually suspended.
+    if (tud_suspended() || s_usb_suspended) {
+        s_remote_wakeup_pending = true;
+    }
 }
 
 void usb_pm_poll() {
     // If we got input activity while suspended, request host wake.
-    if (tud_suspended() && s_remote_wakeup_allowed && s_remote_wakeup_pending) {
+    if (tud_suspended() && s_usb_suspended && s_remote_wakeup_allowed && s_remote_wakeup_pending) {
         s_remote_wakeup_pending = false;
         tud_remote_wakeup();
     }
