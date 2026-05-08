@@ -93,11 +93,12 @@ void on_bt_data(CHANNEL_TYPE channel, uint8_t *data, uint16_t len) {
         }
 
         set_headset(data[56] & 1);
-
         critical_section_enter_blocking(&report_cs);
         memcpy(interrupt_in_data, data + 3, 63);
         report_dirty = true;
         critical_section_exit(&report_cs);
+
+        set_headset(data[56] & 1);
     }
 }
 
