@@ -38,6 +38,9 @@ static queue_t audio_free_fifo;
 queue_t opus_fifo;
 
 constexpr uint32_t AUDIO_WARNING_INTERVAL_US = 1000 * 1000;
+constexpr int USB_AUDIO_RAW_SAMPLES = 192;
+constexpr int HAPTIC_INPUT_FRAMES = USB_AUDIO_RAW_SAMPLES / INPUT_CHANNELS;
+constexpr int HAPTIC_OUTPUT_FRAMES = SAMPLE_SIZE / OUTPUT_CHANNELS;
 constexpr size_t AUDIO_READY_QUEUE_DEPTH = 2;
 constexpr size_t AUDIO_BUFFER_POOL_SIZE = AUDIO_READY_QUEUE_DEPTH + 2; // ready queue + fill + process
 
@@ -115,7 +118,7 @@ void audio_loop() {
     // 1. 读取 USB 音频数据
     if (!tud_audio_available()) return;
 
-    int16_t raw[192];
+    int16_t raw[USB_AUDIO_RAW_SAMPLES];
     uint32_t bytes_read = tud_audio_read(raw, sizeof(raw)); // 每次读入 384 bytes
     int frames = bytes_read / (INPUT_CHANNELS * sizeof(int16_t));
     if (frames == 0) {
@@ -209,7 +212,7 @@ void audio_init() {
     resampler.SetMode(true, 0, false);
     resampler.SetRates(48000, 3000);
     resampler.SetFeedMode(true);
-    resampler.Prealloc(2, 96, 32);
+    resampler.Prealloc(OUTPUT_CHANNELS, HAPTIC_INPUT_FRAMES, HAPTIC_OUTPUT_FRAMES);
     queue_init(&audio_fifo,sizeof(audio_raw_element *),AUDIO_READY_QUEUE_DEPTH);
     queue_init(&audio_free_fifo,sizeof(audio_raw_element *),AUDIO_BUFFER_POOL_SIZE);
     for (auto &buffer : audio_buffer_pool) {
