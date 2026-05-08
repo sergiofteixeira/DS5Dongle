@@ -38,8 +38,12 @@ static queue_t audio_free_fifo;
 queue_t opus_fifo;
 
 constexpr uint32_t AUDIO_WARNING_INTERVAL_US = 1000 * 1000;
+// `tud_audio_read()` returns interleaved USB audio samples with INPUT_CHANNELS.
+// Our haptics path only uses 2 channels (OUTPUT_CHANNELS), but the frame count is
+// still derived from the USB packet's total samples / INPUT_CHANNELS.
 constexpr int USB_AUDIO_RAW_SAMPLES = 192;
-constexpr int HAPTIC_INPUT_FRAMES = USB_AUDIO_RAW_SAMPLES / INPUT_CHANNELS;
+constexpr int USB_AUDIO_FRAMES_PER_READ = USB_AUDIO_RAW_SAMPLES / INPUT_CHANNELS;
+constexpr int HAPTIC_INPUT_FRAMES = USB_AUDIO_FRAMES_PER_READ;
 constexpr int HAPTIC_OUTPUT_FRAMES = SAMPLE_SIZE / OUTPUT_CHANNELS;
 constexpr size_t AUDIO_READY_QUEUE_DEPTH = 2;
 constexpr size_t AUDIO_BUFFER_POOL_SIZE = AUDIO_READY_QUEUE_DEPTH + 2; // ready queue + fill + process
