@@ -5,7 +5,6 @@
 #include <cstdio>
 #include <cstring>
 #include "bt.h"
-#include <queue>
 #include <unordered_map>
 #include <vector>
 #include "btstack_event.h"
@@ -13,18 +12,29 @@
 #include "pico/cyw43_arch.h"
 #include "utils.h"
 #include "bsp/board_api.h"
+#include "pico/sync.h"
 #include "tusb.h"
 #include "usb.h"
 #include "classic/sdp_server.h"
 #include "config.h"
-#include "pico/util/queue.h"
 
 #define MTU_CONTROL 256
 #define MTU_INTERRUPT 1691
 
+#ifndef BT_VERBOSE_LOG
+#define BT_VERBOSE_LOG 0
+#endif
+
+#if BT_VERBOSE_LOG
+#define BT_VERBOSE_PRINTF(...) printf(__VA_ARGS__)
+#define BT_VERBOSE_HEXDUMP(data, size) printf_hexdump(data, size)
+#else
+#define BT_VERBOSE_PRINTF(...) ((void)0)
+#define BT_VERBOSE_HEXDUMP(data, size) ((void)0)
+#endif
+
 using std::unordered_map;
 using std::vector;
-using std::queue;
 
 static void hci_packet_handler(uint8_t packet_type, uint16_t channel, uint8_t *packet, uint16_t size);
 
@@ -40,14 +50,57 @@ static uint16_t hid_interrupt_cid;
 static bt_data_callback_t bt_data_callback = nullptr;
 static bool check_dse = false;
 unordered_map<uint8_t, vector<uint8_t> > feature_data;
-queue_t send_fifo;
+static critical_section_t queue_lock;
+absolute_time_t inactive_time = 0; // 手柄长时间静默
 
-struct send_element {
-    uint8_t data[512];
-    size_t len;
+constexpr size_t SEND_QUEUE_CAPACITY = 2;
+constexpr size_t BT_TX_PACKET_MAX_SIZE = 399; // 0xA2 prefix + largest current output report
+
+struct bt_tx_packet {
+    uint16_t len;
+    uint8_t data[BT_TX_PACKET_MAX_SIZE];
 };
 
-absolute_time_t inactive_time = 0; // 手柄长时间静默
+static bt_tx_packet send_queue[SEND_QUEUE_CAPACITY];
+static size_t send_queue_head = 0;
+static size_t send_queue_tail = 0;
+static size_t send_queue_count = 0;
+
+static bool send_queue_push(const uint8_t *data, uint16_t len) {
+    const bool was_empty = send_queue_count == 0;
+
+    if (send_queue_count == SEND_QUEUE_CAPACITY) {
+        send_queue_tail = (send_queue_tail + 1) % SEND_QUEUE_CAPACITY;
+        --send_queue_count;
+    }
+
+    bt_tx_packet &packet = send_queue[send_queue_head];
+    packet.len = len + 1;
+    packet.data[0] = 0xA2;
+    memcpy(packet.data + 1, data, len);
+    fill_output_report_checksum(packet.data + 1, len);
+
+    send_queue_head = (send_queue_head + 1) % SEND_QUEUE_CAPACITY;
+    ++send_queue_count;
+    return was_empty;
+}
+
+static bool send_queue_pop(bt_tx_packet *packet) {
+    if (send_queue_count == 0) {
+        return false;
+    }
+
+    *packet = send_queue[send_queue_tail];
+    send_queue_tail = (send_queue_tail + 1) % SEND_QUEUE_CAPACITY;
+    --send_queue_count;
+    return true;
+}
+
+static void send_queue_clear() {
+    send_queue_head = 0;
+    send_queue_tail = 0;
+    send_queue_count = 0;
+}
 
 void bt_register_data_callback(bt_data_callback_t callback) {
     bt_data_callback = callback;
@@ -87,7 +140,7 @@ void bt_l2cap_init() {
 }
 
 int bt_init() {
-    queue_init(&send_fifo, sizeof(send_element), 10);
+    critical_section_init(&queue_lock);
 
     bt_l2cap_init();
 
@@ -315,6 +368,9 @@ static void hci_packet_handler(uint8_t packet_type, uint16_t channel, uint8_t *p
             acl_handle = HCI_CON_HANDLE_INVALID;
             hid_control_cid = 0;
             hid_interrupt_cid = 0;
+            critical_section_enter_blocking(&queue_lock);
+            send_queue_clear();
+            critical_section_exit(&queue_lock);
             feature_data.clear();
             cyw43_arch_gpio_put(CYW43_WL_GPIO_LED_PIN, false);
             printf("[HCI] Disconnected reason=0x%02X, start inquiry\n", reason);
@@ -341,8 +397,7 @@ static void l2cap_packet_handler(uint8_t packet_type, uint16_t channel, uint8_t 
             }
             if (packet[3] < 120 || packet[3] > 140) {
                 inactive_time = get_absolute_time();
-            } else if (absolute_time_diff_us(inactive_time, get_absolute_time()) > get_config().inactive_time * 60 *
-                       1000 * 1000) {
+            } else if (absolute_time_diff_us(inactive_time, get_absolute_time()) > get_config().inactive_time * 60 * 1000 * 1000) {
                 printf("disconnect when inactive\n");
                 inactive_time = get_absolute_time();
                 bt_disconnect();
@@ -362,10 +417,10 @@ static void l2cap_packet_handler(uint8_t packet_type, uint16_t channel, uint8_t 
             if (packet[0] == 0xA3) {
                 uint8_t report_id = packet[1];
                 feature_data[report_id].assign(packet + 1, packet + size);
-                printf("[L2CAP] Stored Feature Report 0x%02X, len=%u\n", report_id, size - 1);
+                BT_VERBOSE_PRINTF("[L2CAP] Stored Feature Report 0x%02X, len=%u\n", report_id, size - 1);
             }
-            printf("[L2CAP] HID Control data len=%u\n", size);
-            printf_hexdump(packet, size);
+            BT_VERBOSE_PRINTF("[L2CAP] HID Control data len=%u\n", size);
+            BT_VERBOSE_HEXDUMP(packet, size);
             bt_data_callback(CONTROL, packet, size);
         } else {
             printf("[L2CAP] Data on unknown channel 0x%04X (Interrupt: 0x%04X, Control: 0x%04X)\n",
@@ -475,14 +530,20 @@ static void l2cap_packet_handler(uint8_t packet_type, uint16_t channel, uint8_t 
         case L2CAP_EVENT_CAN_SEND_NOW: {
             // printf("[L2CAP] L2CAP_EVENT_CAN_SEND_NOW\n");
 
-            static send_element send_packet{};
-            if (queue_try_remove(&send_fifo, &send_packet)) {
-                const uint8_t status = l2cap_send(hid_interrupt_cid, send_packet.data, send_packet.len);
-                if (status != 0) {
-                    printf("[L2CAP] L2CAP Send Error, Status: 0x%02X\n", status);
-                }
+            bt_tx_packet data{};
+            critical_section_enter_blocking(&queue_lock);
+            if (!send_queue_pop(&data)) {
+                critical_section_exit(&queue_lock);
+                break;
             }
-            if (!queue_is_empty(&send_fifo)) {
+            const bool has_more = send_queue_count != 0;
+            critical_section_exit(&queue_lock);
+
+            uint8_t status = l2cap_send(hid_interrupt_cid, data.data, data.len);
+            if (status != 0) {
+                printf("[L2CAP] Interrupt Error, Status: 0x%02X\n", status);
+            }
+            if (has_more) {
                 l2cap_request_can_send_now_event(hid_interrupt_cid);
             }
             break;
@@ -492,18 +553,20 @@ static void l2cap_packet_handler(uint8_t packet_type, uint16_t channel, uint8_t 
 
 void bt_write(uint8_t *data, uint16_t len) {
     if (hid_interrupt_cid == 0) return;
-    static send_element packet{};
-    memset(packet.data, 0, 512);
-    packet.len = len + 1;
-    packet.data[0] = 0xA2;
-    memcpy(packet.data + 1, data, len);
-    fill_output_report_checksum(packet.data + 1, len);
-
-    if (!queue_try_add(&send_fifo, &packet)) {
-        printf("[L2CAP bt_write] Error: Failed to add packet to send FIFO\n");
+    if (len + 1 > BT_TX_PACKET_MAX_SIZE) {
+        printf("[L2CAP bt_write] Warning: packet too large: %u\n", len + 1);
         return;
     }
-    if (queue_get_level(&send_fifo) == 1) {
+
+    critical_section_enter_blocking(&queue_lock);
+    const bool request_send_now = send_queue_push(data, len);
+    critical_section_exit(&queue_lock);
+
+    if (hid_interrupt_cid == 0) {
+        printf("[L2CAP bt_write] Warning: hid_interrupt_cid 0");
+        return;
+    }
+    if (request_send_now) {
         l2cap_request_can_send_now_event(hid_interrupt_cid);
     }
 }
@@ -521,11 +584,11 @@ vector<uint8_t> get_feature_data(uint8_t reportId, uint16_t len) {
         reportId == 0x63 ||
         reportId == 0x65 ||
         reportId == 0x64
-    ) {
+        ) {
         if (hid_control_cid != 0) {
             uint8_t get_feature[] = {0x43, reportId};
             l2cap_send(hid_control_cid, get_feature, sizeof(get_feature));
-            printf("[L2CAP] Requesting Get Feature Report 0x%02X\n", reportId);
+            BT_VERBOSE_PRINTF("[L2CAP] Requesting Get Feature Report 0x%02X\n", reportId);
         }
     }
     return ret;
@@ -539,8 +602,8 @@ void set_feature_data(uint8_t reportId, uint8_t *data, uint16_t len) {
         memcpy(get_feature + 2, data, len);
         fill_feature_report_checksum(get_feature + 1, len + 1);
         l2cap_send(hid_control_cid, get_feature, len + 2);
-        printf("[L2CAP] Requesting Set Feature Report 0x%02X\n", reportId);
-        printf_hexdump(get_feature, len + 2);
+        BT_VERBOSE_PRINTF("[L2CAP] Requesting Set Feature Report 0x%02X\n", reportId);
+        BT_VERBOSE_HEXDUMP(get_feature, len + 2);
     }
 }
 
