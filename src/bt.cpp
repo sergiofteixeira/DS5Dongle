@@ -303,7 +303,9 @@ static void hci_packet_handler(uint8_t packet_type, uint16_t channel, uint8_t *p
             // If the host is suspended, keep USB attached so we can remote-wake it
             // when the controller reconnects.
             if (!tud_suspended()) {
+#ifndef ENABLE_SERIAL
                 tud_disconnect();
+#endif
             }
             gap_connectable_control(1);
             gap_discoverable_control(1);
@@ -353,7 +355,9 @@ static void l2cap_packet_handler(uint8_t packet_type, uint16_t channel, uint8_t 
                 }else if (size > 1){
                     is_dse = true;
                 }
+#ifndef ENABLE_SERIAL
                 tud_connect();
+#endif
             }
             if (packet[0] == 0xA3) {
                 uint8_t report_id = packet[1];

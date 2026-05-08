@@ -12,6 +12,9 @@
 #include "hardware/vreg.h"
 #include "hardware/watchdog.h"
 #include "pico/cyw43_arch.h"
+#if ENABLE_SERIAL
+#include "pico/stdio_usb.h"
+#endif
 #include "config.h"
 #include "cmd.h"
 #include "usb.h"
@@ -199,8 +202,13 @@ int main() {
         .speed = TUSB_SPEED_FULL
     };
     tusb_init(BOARD_TUD_RHPORT, &dev_init);
+#ifndef ENABLE_SERIAL
     tud_disconnect();
+#endif
     board_init_after_tusb();
+#if ENABLE_SERIAL
+    stdio_usb_init();
+#endif
 
     if (cyw43_arch_init()) {
         printf("Failed to initialize CYW43\n");
@@ -208,6 +216,7 @@ int main() {
     }
     cyw43_arch_gpio_put(CYW43_WL_GPIO_LED_PIN, false);
 
+#ifndef ENABLE_SERIAL
     if (watchdog_caused_reboot()) {
         printf("Rebooted by Watchdog!\n");
         // 当崩溃重启以后，闪三下灯
@@ -222,6 +231,7 @@ int main() {
     } else {
         printf("Clean boot\n");
     }
+#endif
   
     // Initialize the critical section for the report buffer
     critical_section_init(&report_cs);
@@ -233,10 +243,14 @@ int main() {
 
     audio_init();
 
+#ifndef ENABLE_SERIAL
     watchdog_enable(1000, true);
+#endif
 
     while (1) {
+#ifndef ENABLE_SERIAL
         watchdog_update();
+#endif
         cyw43_arch_poll();
         tud_task();
         usb_pm_poll();
