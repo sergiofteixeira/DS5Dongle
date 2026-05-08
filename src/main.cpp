@@ -38,6 +38,14 @@ volatile bool report_dirty = false;
 void interrupt_loop() {
     if (!tud_hid_ready()) return;
 
+    // TODO: Refactor for better code reuse
+    if (get_config().polling_rate_mode != 2) {
+        if (!tud_hid_report(0x01, interrupt_in_data, 63)) {
+            printf("[USBHID] tud_hid_report error\n");
+        }
+        return;
+    }
+
     bool should_send = false;
     uint8_t safe_report[63]{};
 
