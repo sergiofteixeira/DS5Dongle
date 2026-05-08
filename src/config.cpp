@@ -50,11 +50,11 @@ void config_valid() {
         body->haptics_gain = 1.0f;
         printf("[Config] Haptics Gain value is invalid\n");
     }
-    if (std::isnan(body->speaker_volume) || body->speaker_volume < 1.0f || body->speaker_volume > 2.0f) {
-        body->speaker_volume = 2.0f;
+    if (std::isnan(body->speaker_volume) || body->speaker_volume < -100 || body->speaker_volume > 0) {
+        body->speaker_volume = -100;
         printf("[Config] Speaker Volume is invalid\n");
     }
-    if (body->inactive_time < 10 || body->inactive_time > 60) {
+    if (body->inactive_time < 5 || body->inactive_time > 60) {
         body->inactive_time = 30;
         printf("[Config] Inactive time is invalid\n");
     }
@@ -70,12 +70,12 @@ void config_valid() {
         body->polling_rate_mode = 0;
         printf("[Config] polling_rate_mode is invalid\n");
     }
-    if (body->haptics_buffer_length < 16 || body->haptics_buffer_length > 255) {
-        body->haptics_buffer_length = 48;
+    if (body->haptics_buffer_length < 16 || body->haptics_buffer_length > 128) {
+        body->haptics_buffer_length = 64;
         printf("[Config] haptics_buffer_length is invalid\n");
     }
-    if (body->controller_mode > 1) {
-        body->controller_mode = 0;
+    if (body->controller_mode > 2) {
+        body->controller_mode = 2;
         printf("[Config] controller_mode is invalid\n");
     }
 }
@@ -121,4 +121,9 @@ void set_config(const uint8_t *new_config, const uint16_t len) {
     }else {
         cyw43_arch_gpio_put(CYW43_WL_GPIO_LED_PIN, true);
     }
+}
+
+void set_config(const Config_body &new_config) {
+    config.body = new_config;
+    config_valid();
 }

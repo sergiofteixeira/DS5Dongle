@@ -12,8 +12,12 @@
 #include "hardware/vreg.h"
 #include "hardware/watchdog.h"
 #include "pico/cyw43_arch.h"
+#if ENABLE_SERIAL
+#include "pico/stdio_usb.h"
+#endif
 #include "config.h"
 #include "cmd.h"
+#include "usb.h"
 
 // Pico SDK speciifically for waiting on conditions
 #include "pico/critical_section.h"
@@ -76,6 +80,29 @@ void interrupt_loop() {
 void on_bt_data(CHANNEL_TYPE channel, uint8_t *data, uint16_t len) {
     // printf("[Main] BT data callback: channel=%u len=%u\n", channel, len);
     if (channel == INTERRUPT && data[1] == 0x31) {
+        if (len < 3 + sizeof(USBGetStateData)) {
+            return;
+        }
+
+        // Remote wakeup: only trigger on a real button press edge.
+        const auto pressed = [](USBGetStateData const &r) {
+            return r.DPad != static_cast<Direction>(8) ||
+                   r.ButtonSquare || r.ButtonCross || r.ButtonCircle || r.ButtonTriangle ||
+                   r.ButtonL1 || r.ButtonR1 || r.ButtonL2 || r.ButtonR2 ||
+                   r.ButtonCreate || r.ButtonOptions || r.ButtonL3 || r.ButtonR3 ||
+                   r.ButtonHome || r.ButtonPad || r.ButtonMute ||
+                   r.ButtonLeftFunction || r.ButtonRightFunction || r.ButtonLeftPaddle || r.ButtonRightPaddle;
+        };
+
+        USBGetStateData prev{};
+        USBGetStateData now{};
+        memcpy(&prev, interrupt_in_data, sizeof(prev));
+        memcpy(&now, data + 3, sizeof(now));
+
+        if (pressed(now) && !pressed(prev)) {
+            usb_remote_wakeup_request();
+        }
+
         if ((data[56] & 1) != (interrupt_in_data[53] & 1)) {
             set_headset(data[56] & 1);
         }
@@ -175,8 +202,13 @@ int main() {
         .speed = TUSB_SPEED_FULL
     };
     tusb_init(BOARD_TUD_RHPORT, &dev_init);
+#ifndef ENABLE_SERIAL
     tud_disconnect();
+#endif
     board_init_after_tusb();
+#if ENABLE_SERIAL
+    stdio_usb_init();
+#endif
 
     if (cyw43_arch_init()) {
         printf("Failed to initialize CYW43\n");
@@ -184,6 +216,7 @@ int main() {
     }
     cyw43_arch_gpio_put(CYW43_WL_GPIO_LED_PIN, false);
 
+#ifndef ENABLE_SERIAL
     if (watchdog_caused_reboot()) {
         printf("Rebooted by Watchdog!\n");
         // 当崩溃重启以后，闪三下灯
@@ -198,6 +231,7 @@ int main() {
     } else {
         printf("Clean boot\n");
     }
+#endif
   
     // Initialize the critical section for the report buffer
     critical_section_init(&report_cs);
@@ -209,12 +243,17 @@ int main() {
 
     audio_init();
 
+#ifndef ENABLE_SERIAL
     watchdog_enable(1000, true);
+#endif
 
     while (1) {
+#ifndef ENABLE_SERIAL
         watchdog_update();
+#endif
         cyw43_arch_poll();
         tud_task();
+        usb_pm_poll();
         audio_loop();
         interrupt_loop();
     }
