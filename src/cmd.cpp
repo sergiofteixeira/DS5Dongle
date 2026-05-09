@@ -11,6 +11,7 @@
 #include "config.h"
 #include "device/usbd.h"
 #include "pico/time.h"
+#include "usb.h"
 
 bool is_pico_cmd(uint8_t report_id) {
     if (report_id == 0xf6 ||
@@ -53,8 +54,6 @@ void pico_cmd_set(uint8_t report_id, uint8_t const *buffer, uint16_t bufsize) {
     }
     if (buffer[0] == 0x03) {
         printf("[CMD] Enter tud reconnect func\n");
-        tud_disconnect();
-        sleep_ms(150);
-        tud_connect();
+        usb_request_reconnect(150);
     }
 }
