@@ -18,6 +18,8 @@
 #include "config.h"
 #include "cmd.h"
 
+#include "usb.h"
+
 // Pico SDK speciifically for waiting on conditions
 #include "pico/critical_section.h"
 
@@ -247,6 +249,7 @@ int main() {
 #endif
         cyw43_arch_poll();
         tud_task();
+        usb_pm_poll();
         audio_loop();
         interrupt_loop();
     }

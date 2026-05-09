@@ -13,6 +13,8 @@
 #include "pico/cyw43_arch.h"
 #include "utils.h"
 #include "bsp/board_api.h"
+#include "tusb.h"
+#include "usb.h"
 #include "classic/sdp_server.h"
 #include "config.h"
 #include "pico/util/queue.h"
@@ -298,9 +300,13 @@ static void hci_packet_handler(uint8_t packet_type, uint16_t channel, uint8_t *p
         }
 
         case HCI_EVENT_DISCONNECTION_COMPLETE: {
+            // If the host is suspended, keep USB attached so we can remote-wake it
+            // when the controller reconnects.
+            if (!tud_suspended()) {
 #if !ENABLE_SERIAL
-            tud_disconnect();
+                tud_disconnect();
 #endif
+            }
             gap_connectable_control(1);
             gap_discoverable_control(1);
             const uint8_t reason = hci_event_disconnection_complete_get_reason(packet);
@@ -420,7 +426,21 @@ static void l2cap_packet_handler(uint8_t packet_type, uint16_t channel, uint8_t 
                     memcpy(report32 + 2, packet_0x10, sizeof(packet_0x10));
                     bt_write(report32, sizeof(report32));
 
-                    // tud_connect();
+                    // If the host is suspended, a controller (re)connect is user activity.
+                    // Request remote wakeup.
+                    if (tud_suspended()) {
+                        usb_remote_wakeup_request();
+                    } else {
+                        // Only expose USB once controller is connected.
+                        // (Matches existing behavior on normal runtime.)
+                        // Note: DSE detection path may call tud_connect() as well.
+                        // Calling twice is fine.
+                        //
+                        // Keep this here so reconnect after suspend also re-enumerates if needed.
+#if !ENABLE_SERIAL
+                        tud_connect();
+#endif
+                    }
                 } else {
                     printf("[L2CAP] Unknown Channel psm: 0x%02X", psm);
                 }
