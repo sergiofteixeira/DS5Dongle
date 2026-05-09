@@ -201,6 +201,7 @@ int main() {
 #if !ENABLE_SERIAL
     tud_disconnect();
 #endif
+    usb_pm_init();
     board_init_after_tusb();
 #if ENABLE_SERIAL
     stdio_usb_init();

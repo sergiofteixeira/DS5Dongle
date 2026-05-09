@@ -302,7 +302,7 @@ static void hci_packet_handler(uint8_t packet_type, uint16_t channel, uint8_t *p
         case HCI_EVENT_DISCONNECTION_COMPLETE: {
             // If the host is suspended, keep USB attached so we can remote-wake it
             // when the controller reconnects.
-            if (!tud_suspended()) {
+            if (!usb_is_suspended_cached()) {
 #if !ENABLE_SERIAL
                 usb_request_disconnect();
 #endif
@@ -432,7 +432,7 @@ static void l2cap_packet_handler(uint8_t packet_type, uint16_t channel, uint8_t 
                     // Note: we intentionally do NOT call tud_connect() here when not suspended.
                     // This project delays USB enumeration until DSE-vs-DS5 detection completes
                     // (see init_feature() + 0x70 feature report handling on the control channel).
-                    if (tud_suspended()) {
+                    if (usb_is_suspended_cached()) {
                         usb_remote_wakeup_request();
                     }
                 } else {
