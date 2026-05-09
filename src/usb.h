@@ -14,4 +14,9 @@ void usb_pm_poll();
 // Queue a remote-wakeup request (processed in usb_pm_poll).
 void usb_remote_wakeup_request();
 
+// Request USB connect/disconnect from non-USB contexts.
+void usb_request_connect();
+void usb_request_disconnect();
+void usb_request_reconnect(uint32_t delay_ms);
+
 #endif //DS5_BRIDGE_USB_H

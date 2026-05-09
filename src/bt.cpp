@@ -313,7 +313,7 @@ static void hci_packet_handler(uint8_t packet_type, uint16_t channel, uint8_t *p
             // when the controller reconnects.
             if (!tud_suspended()) {
 #if !ENABLE_SERIAL
-                tud_disconnect();
+                usb_request_disconnect();
 #endif
             }
             gap_connectable_control(1);
@@ -361,14 +361,14 @@ static void l2cap_packet_handler(uint8_t packet_type, uint16_t channel, uint8_t 
                     check_dse = false;
                     is_dse = true;
 #if !ENABLE_SERIAL
-                    tud_connect();
+                    usb_request_connect();
 #endif
                 } else if (packet[0] == 0x02) {
                     printf("Connected DS5 Controller\n");
                     check_dse = false;
                     is_dse = false;
 #if !ENABLE_SERIAL
-                    tud_connect();
+                    usb_request_connect();
 #endif
                 }
             }

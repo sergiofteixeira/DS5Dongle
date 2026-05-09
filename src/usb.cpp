@@ -7,6 +7,8 @@
 #include "config.h"
 #include "bt.h"
 #include "usb.h"
+#include "pico/time.h"
+#include "pico/critical_section.h"
 
 uint8_t mute[2]; // 0: SPEAKER(0x02) 1: MIC(0x05)
 float volume[2] = {-100.0f,0.0f}; // 0: SPEAKER(0x02) 1: MIC(0x05)
@@ -15,6 +17,14 @@ static volatile bool s_usb_suspended = false;
 static volatile bool s_disconnect_requested = false;
 static volatile bool s_remote_wakeup_allowed = false;
 static volatile bool s_remote_wakeup_pending = false;
+
+static critical_section_t s_usb_pm_cs;
+static volatile bool s_usb_req_connect = false;
+static volatile bool s_usb_req_disconnect = false;
+static volatile uint32_t s_usb_req_connect_at_us = 0;
+static volatile uint32_t s_suspend_start_us = 0;
+
+static constexpr uint32_t REMOTE_WAKE_ARM_US = 300 * 1000;
 
 #define UAC1_ENTITY_SPK_FEATURE_UNIT    0x02
 #define UAC1_ENTITY_MIC_FEATURE_UNIT    0x05
@@ -203,6 +213,8 @@ extern "C" void tud_suspend_cb(bool remote_wakeup_en) {
     s_disconnect_requested = true;
     s_remote_wakeup_allowed = remote_wakeup_en;
 
+    s_suspend_start_us = time_us_32();
+
     // Don't keep a stale wake request that would abort suspend entry.
     s_remote_wakeup_pending = false;
 }
@@ -210,6 +222,7 @@ extern "C" void tud_suspend_cb(bool remote_wakeup_en) {
 extern "C" void tud_resume_cb(void) {
     s_usb_suspended = false;
     s_remote_wakeup_pending = false;
+    s_suspend_start_us = 0;
 }
 
 extern "C" void tud_mount_cb(void) {
@@ -218,26 +231,94 @@ extern "C" void tud_mount_cb(void) {
     s_remote_wakeup_allowed = false;
     s_remote_wakeup_pending = false;
     s_disconnect_requested = false;
+    s_suspend_start_us = 0;
 }
 
 extern "C" void tud_umount_cb(void) {
     s_usb_suspended = false;
     s_remote_wakeup_allowed = false;
     s_remote_wakeup_pending = false;
+    s_disconnect_requested = false;
+    s_usb_req_connect = false;
+    s_usb_req_disconnect = false;
+    s_usb_req_connect_at_us = 0;
+    s_suspend_start_us = 0;
 }
 
 void usb_remote_wakeup_request() {
     // Only queue a wake when we are actually suspended.
     if (tud_suspended() || s_usb_suspended) {
+        // Avoid aborting suspend entry due to immediate wakeup.
+        const uint32_t start = s_suspend_start_us;
+        if (start != 0 && (time_us_32() - start) < REMOTE_WAKE_ARM_US) {
+            return;
+        }
         s_remote_wakeup_pending = true;
     }
 }
 
+void usb_request_connect() {
+    critical_section_enter_blocking(&s_usb_pm_cs);
+    s_usb_req_connect = true;
+    s_usb_req_connect_at_us = 0;
+    critical_section_exit(&s_usb_pm_cs);
+}
+
+void usb_request_disconnect() {
+    critical_section_enter_blocking(&s_usb_pm_cs);
+    s_usb_req_disconnect = true;
+    s_usb_req_connect = false;
+    s_usb_req_connect_at_us = 0;
+    critical_section_exit(&s_usb_pm_cs);
+}
+
+void usb_request_reconnect(uint32_t delay_ms) {
+    critical_section_enter_blocking(&s_usb_pm_cs);
+    s_usb_req_disconnect = true;
+    s_usb_req_connect = true;
+    s_usb_req_connect_at_us = time_us_32() + delay_ms * 1000u;
+    critical_section_exit(&s_usb_pm_cs);
+}
+
 void usb_pm_poll() {
+    // One-time init for our critical section.
+    static bool cs_init = false;
+    if (!cs_init) {
+        critical_section_init(&s_usb_pm_cs);
+        cs_init = true;
+    }
+
     // If we got activity while suspended, request host wake.
     if (tud_suspended() && s_usb_suspended && s_remote_wakeup_allowed && s_remote_wakeup_pending) {
         s_remote_wakeup_pending = false;
         tud_remote_wakeup();
+    }
+
+    // Handle queued connect/disconnect requests.
+    bool req_disc = false;
+    bool req_conn = false;
+    uint32_t conn_at = 0;
+    critical_section_enter_blocking(&s_usb_pm_cs);
+    req_disc = s_usb_req_disconnect;
+    req_conn = s_usb_req_connect;
+    conn_at = s_usb_req_connect_at_us;
+    critical_section_exit(&s_usb_pm_cs);
+
+    if (req_disc && tud_mounted()) {
+        tud_disconnect();
+        critical_section_enter_blocking(&s_usb_pm_cs);
+        s_usb_req_disconnect = false;
+        critical_section_exit(&s_usb_pm_cs);
+    }
+
+    if (req_conn && !tud_mounted() && !tud_suspended()) {
+        if (conn_at == 0 || (int32_t)(time_us_32() - conn_at) >= 0) {
+            tud_connect();
+            critical_section_enter_blocking(&s_usb_pm_cs);
+            s_usb_req_connect = false;
+            s_usb_req_connect_at_us = 0;
+            critical_section_exit(&s_usb_pm_cs);
+        }
     }
 
     if (!s_disconnect_requested) {
