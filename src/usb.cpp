@@ -17,6 +17,7 @@ static volatile bool s_usb_suspended = false;
 static volatile bool s_disconnect_requested = false;
 static volatile bool s_remote_wakeup_allowed = false;
 static volatile bool s_remote_wakeup_pending = false;
+static volatile bool s_wake_armed = false;
 
 static critical_section_t s_usb_pm_cs;
 static volatile bool s_usb_req_connect = false;
@@ -214,6 +215,7 @@ extern "C" void tud_suspend_cb(bool remote_wakeup_en) {
     s_remote_wakeup_allowed = remote_wakeup_en;
 
     s_suspend_start_us = time_us_32();
+    s_wake_armed = true;
 
     // Don't keep a stale wake request that would abort suspend entry.
     s_remote_wakeup_pending = false;
@@ -223,6 +225,7 @@ extern "C" void tud_resume_cb(void) {
     s_usb_suspended = false;
     s_remote_wakeup_pending = false;
     s_suspend_start_us = 0;
+    s_wake_armed = false;
 }
 
 extern "C" void tud_mount_cb(void) {
@@ -232,6 +235,7 @@ extern "C" void tud_mount_cb(void) {
     s_remote_wakeup_pending = false;
     s_disconnect_requested = false;
     s_suspend_start_us = 0;
+    s_wake_armed = false;
 }
 
 extern "C" void tud_umount_cb(void) {
@@ -243,11 +247,19 @@ extern "C" void tud_umount_cb(void) {
     s_usb_req_disconnect = false;
     s_usb_req_connect_at_us = 0;
     s_suspend_start_us = 0;
+    s_wake_armed = false;
+}
+
+bool usb_is_suspended_cached() {
+    return s_usb_suspended;
 }
 
 void usb_remote_wakeup_request() {
     // Only queue a wake when we are actually suspended.
     if (tud_suspended() || s_usb_suspended) {
+        if (!s_wake_armed) {
+            return;
+        }
         // Avoid aborting suspend entry due to immediate wakeup.
         const uint32_t start = s_suspend_start_us;
         if (start != 0 && (time_us_32() - start) < REMOTE_WAKE_ARM_US) {
@@ -255,6 +267,10 @@ void usb_remote_wakeup_request() {
         }
         s_remote_wakeup_pending = true;
     }
+}
+
+void usb_pm_init() {
+    critical_section_init(&s_usb_pm_cs);
 }
 
 void usb_request_connect() {
@@ -281,13 +297,6 @@ void usb_request_reconnect(uint32_t delay_ms) {
 }
 
 void usb_pm_poll() {
-    // One-time init for our critical section.
-    static bool cs_init = false;
-    if (!cs_init) {
-        critical_section_init(&s_usb_pm_cs);
-        cs_init = true;
-    }
-
     // If we got activity while suspended, request host wake.
     if (tud_suspended() && s_usb_suspended && s_remote_wakeup_allowed && s_remote_wakeup_pending) {
         s_remote_wakeup_pending = false;
