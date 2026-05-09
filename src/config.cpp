@@ -13,7 +13,7 @@
 #include "pico/cyw43_arch.h"
 
 constexpr uint32_t CONFIG_MAGIC = 0x66ccff00;
-constexpr uint16_t CONFIG_VERSION = 1;
+constexpr uint16_t CONFIG_VERSION = 2;
 constexpr uint32_t CONFIG_FLASH_OFFSET = PICO_FLASH_SIZE_BYTES - FLASH_SECTOR_SIZE;
 static Config config{};
 bool is_dse = false;
@@ -33,6 +33,7 @@ const Config *flash_config() {
 }
 
 void config_valid() {
+    const uint16_t old_size = config.size;
     // valid config and set default value
     if (config.magic != CONFIG_MAGIC) {
         config.magic = CONFIG_MAGIC;
@@ -45,6 +46,13 @@ void config_valid() {
     if (config.size != sizeof(Config_body)) {
         config.size = sizeof(Config_body);
         printf("[Config] Config Body size is invalid\n");
+
+        // Upgraded config struct: ensure new fields get sane defaults.
+        if (old_size < sizeof(Config_body)) {
+            config.body.enable_remote_wakeup = 1;
+            config.body.wake_on_reconnect = 1;
+            config.body.wake_on_button = 0;
+        }
     }
     auto body = &config.body;
     if (std::isnan(body->haptics_gain) || body->haptics_gain < 1.0f || body->haptics_gain > 2.0f) {
@@ -78,6 +86,19 @@ void config_valid() {
     if (body->controller_mode > 2) {
         body->controller_mode = 2;
         printf("[Config] controller_mode is invalid\n");
+    }
+
+    if (body->enable_remote_wakeup > 1) {
+        body->enable_remote_wakeup = 1;
+        printf("[Config] enable_remote_wakeup is invalid\n");
+    }
+    if (body->wake_on_reconnect > 1) {
+        body->wake_on_reconnect = 1;
+        printf("[Config] wake_on_reconnect is invalid\n");
+    }
+    if (body->wake_on_button > 1) {
+        body->wake_on_button = 0;
+        printf("[Config] wake_on_button is invalid\n");
     }
 }
 
