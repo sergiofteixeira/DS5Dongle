@@ -38,7 +38,7 @@ uint8_t interrupt_in_data[63] = {
 };
 
 critical_section_t report_cs;
-volatile bool report_dirty = false;
+bool report_dirty = false;
 
 void interrupt_loop() {
     if (!tud_hid_ready()) return;
@@ -81,6 +81,29 @@ void interrupt_loop() {
 void on_bt_data(CHANNEL_TYPE channel, uint8_t *data, uint16_t len) {
     // printf("[Main] BT data callback: channel=%u len=%u\n", channel, len);
     if (channel == INTERRUPT && data[1] == 0x31) {
+        // Optional wake-on-button while USB is suspended.
+        if (get_config().wake_on_button && usb_is_suspended_cached() && len >= 3 + sizeof(USBGetStateData)) {
+            const auto pressed = [](USBGetStateData const &r) {
+                return r.DPad != static_cast<Direction>(8) ||
+                       r.ButtonSquare || r.ButtonCross || r.ButtonCircle || r.ButtonTriangle ||
+                       r.ButtonL1 || r.ButtonR1 || r.ButtonL2 || r.ButtonR2 ||
+                       r.ButtonCreate || r.ButtonOptions || r.ButtonL3 || r.ButtonR3 ||
+                       r.ButtonHome || r.ButtonPad || r.ButtonMute ||
+                       r.ButtonLeftFunction || r.ButtonRightFunction || r.ButtonLeftPaddle || r.ButtonRightPaddle;
+            };
+
+            USBGetStateData prev{};
+            USBGetStateData now{};
+            critical_section_enter_blocking(&report_cs);
+            memcpy(&prev, interrupt_in_data, sizeof(prev));
+            critical_section_exit(&report_cs);
+            memcpy(&now, data + 3, sizeof(now));
+
+            if (pressed(now) && !pressed(prev)) {
+                usb_remote_wakeup_request();
+            }
+        }
+
         if ((data[56] & 1) != (interrupt_in_data[53] & 1)) {
             set_headset(data[56] & 1);
         }

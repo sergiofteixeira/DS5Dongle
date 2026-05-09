@@ -441,7 +441,7 @@ static void l2cap_packet_handler(uint8_t packet_type, uint16_t channel, uint8_t 
                     // Note: we intentionally do NOT call tud_connect() here when not suspended.
                     // This project delays USB enumeration until DSE-vs-DS5 detection completes
                     // (see init_feature() + 0x70 feature report handling on the control channel).
-                    if (usb_is_suspended_cached()) {
+                    if (usb_is_suspended_cached() && get_config().wake_on_reconnect) {
                         usb_remote_wakeup_request();
                     }
                 } else {

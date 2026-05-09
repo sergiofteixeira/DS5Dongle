@@ -10,20 +10,22 @@
 #include "pico/time.h"
 #include "pico/critical_section.h"
 
+#include <atomic>
+
 uint8_t mute[2]; // 0: SPEAKER(0x02) 1: MIC(0x05)
 float volume[2] = {-100.0f,0.0f}; // 0: SPEAKER(0x02) 1: MIC(0x05)
 
-static volatile bool s_usb_suspended = false;
-static volatile bool s_disconnect_requested = false;
-static volatile bool s_remote_wakeup_allowed = false;
-static volatile bool s_remote_wakeup_pending = false;
-static volatile bool s_wake_armed = false;
+static std::atomic<bool> s_usb_suspended{false};
+static std::atomic<bool> s_disconnect_requested{false};
+static std::atomic<bool> s_remote_wakeup_allowed{false};
+static std::atomic<bool> s_remote_wakeup_pending{false};
+static std::atomic<bool> s_wake_armed{false};
 
 static critical_section_t s_usb_pm_cs;
-static volatile bool s_usb_req_connect = false;
-static volatile bool s_usb_req_disconnect = false;
-static volatile uint32_t s_usb_req_connect_at_us = 0;
-static volatile uint32_t s_suspend_start_us = 0;
+static std::atomic<bool> s_usb_req_connect{false};
+static std::atomic<bool> s_usb_req_disconnect{false};
+static std::atomic<uint32_t> s_usb_req_connect_at_us{0};
+static std::atomic<uint32_t> s_suspend_start_us{0};
 
 static constexpr uint32_t REMOTE_WAKE_ARM_US = 300 * 1000;
 
@@ -210,62 +212,66 @@ void tud_hid_report_complete_cb(uint8_t instance, uint8_t const *report, uint16_
 
 extern "C" void tud_suspend_cb(bool remote_wakeup_en) {
     // TinyUSB callbacks can run in IRQ context. Defer BTstack calls to main loop.
-    s_usb_suspended = true;
-    s_disconnect_requested = true;
-    s_remote_wakeup_allowed = remote_wakeup_en;
+    s_usb_suspended.store(true, std::memory_order_relaxed);
+    s_disconnect_requested.store(true, std::memory_order_relaxed);
+    s_remote_wakeup_allowed.store(remote_wakeup_en, std::memory_order_relaxed);
 
-    s_suspend_start_us = time_us_32();
-    s_wake_armed = true;
+    s_suspend_start_us.store(time_us_32(), std::memory_order_relaxed);
+    s_wake_armed.store(true, std::memory_order_relaxed);
 
     // Don't keep a stale wake request that would abort suspend entry.
-    s_remote_wakeup_pending = false;
+    s_remote_wakeup_pending.store(false, std::memory_order_relaxed);
 }
 
 extern "C" void tud_resume_cb(void) {
-    s_usb_suspended = false;
-    s_remote_wakeup_pending = false;
-    s_suspend_start_us = 0;
-    s_wake_armed = false;
+    s_usb_suspended.store(false, std::memory_order_relaxed);
+    s_remote_wakeup_pending.store(false, std::memory_order_relaxed);
+    s_suspend_start_us.store(0, std::memory_order_relaxed);
+    s_wake_armed.store(false, std::memory_order_relaxed);
 }
 
 extern "C" void tud_mount_cb(void) {
     // Host (re)enumerated us. Clear stale suspend state.
-    s_usb_suspended = false;
-    s_remote_wakeup_allowed = false;
-    s_remote_wakeup_pending = false;
-    s_disconnect_requested = false;
-    s_suspend_start_us = 0;
-    s_wake_armed = false;
+    s_usb_suspended.store(false, std::memory_order_relaxed);
+    s_remote_wakeup_allowed.store(false, std::memory_order_relaxed);
+    s_remote_wakeup_pending.store(false, std::memory_order_relaxed);
+    s_disconnect_requested.store(false, std::memory_order_relaxed);
+    s_suspend_start_us.store(0, std::memory_order_relaxed);
+    s_wake_armed.store(false, std::memory_order_relaxed);
 }
 
 extern "C" void tud_umount_cb(void) {
-    s_usb_suspended = false;
-    s_remote_wakeup_allowed = false;
-    s_remote_wakeup_pending = false;
-    s_disconnect_requested = false;
-    s_usb_req_connect = false;
-    s_usb_req_disconnect = false;
-    s_usb_req_connect_at_us = 0;
-    s_suspend_start_us = 0;
-    s_wake_armed = false;
+    s_usb_suspended.store(false, std::memory_order_relaxed);
+    s_remote_wakeup_allowed.store(false, std::memory_order_relaxed);
+    s_remote_wakeup_pending.store(false, std::memory_order_relaxed);
+    s_disconnect_requested.store(false, std::memory_order_relaxed);
+    s_usb_req_connect.store(false, std::memory_order_relaxed);
+    s_usb_req_disconnect.store(false, std::memory_order_relaxed);
+    s_usb_req_connect_at_us.store(0, std::memory_order_relaxed);
+    s_suspend_start_us.store(0, std::memory_order_relaxed);
+    s_wake_armed.store(false, std::memory_order_relaxed);
 }
 
 bool usb_is_suspended_cached() {
-    return s_usb_suspended;
+    return s_usb_suspended.load(std::memory_order_relaxed);
 }
 
 void usb_remote_wakeup_request() {
+    if (!get_config().enable_remote_wakeup) {
+        return;
+    }
+
     // Only queue a wake when we are actually suspended.
-    if (tud_suspended() || s_usb_suspended) {
-        if (!s_wake_armed) {
+    if (tud_suspended() || s_usb_suspended.load(std::memory_order_relaxed)) {
+        if (!s_wake_armed.load(std::memory_order_relaxed)) {
             return;
         }
         // Avoid aborting suspend entry due to immediate wakeup.
-        const uint32_t start = s_suspend_start_us;
+        const uint32_t start = s_suspend_start_us.load(std::memory_order_relaxed);
         if (start != 0 && (time_us_32() - start) < REMOTE_WAKE_ARM_US) {
             return;
         }
-        s_remote_wakeup_pending = true;
+        s_remote_wakeup_pending.store(true, std::memory_order_relaxed);
     }
 }
 
@@ -275,31 +281,34 @@ void usb_pm_init() {
 
 void usb_request_connect() {
     critical_section_enter_blocking(&s_usb_pm_cs);
-    s_usb_req_connect = true;
-    s_usb_req_connect_at_us = 0;
+    s_usb_req_connect.store(true, std::memory_order_relaxed);
+    s_usb_req_connect_at_us.store(0, std::memory_order_relaxed);
     critical_section_exit(&s_usb_pm_cs);
 }
 
 void usb_request_disconnect() {
     critical_section_enter_blocking(&s_usb_pm_cs);
-    s_usb_req_disconnect = true;
-    s_usb_req_connect = false;
-    s_usb_req_connect_at_us = 0;
+    s_usb_req_disconnect.store(true, std::memory_order_relaxed);
+    s_usb_req_connect.store(false, std::memory_order_relaxed);
+    s_usb_req_connect_at_us.store(0, std::memory_order_relaxed);
     critical_section_exit(&s_usb_pm_cs);
 }
 
 void usb_request_reconnect(uint32_t delay_ms) {
     critical_section_enter_blocking(&s_usb_pm_cs);
-    s_usb_req_disconnect = true;
-    s_usb_req_connect = true;
-    s_usb_req_connect_at_us = time_us_32() + delay_ms * 1000u;
+    s_usb_req_disconnect.store(true, std::memory_order_relaxed);
+    s_usb_req_connect.store(true, std::memory_order_relaxed);
+    s_usb_req_connect_at_us.store(time_us_32() + delay_ms * 1000u, std::memory_order_relaxed);
     critical_section_exit(&s_usb_pm_cs);
 }
 
 void usb_pm_poll() {
     // If we got activity while suspended, request host wake.
-    if (tud_suspended() && s_usb_suspended && s_remote_wakeup_allowed && s_remote_wakeup_pending) {
-        s_remote_wakeup_pending = false;
+    if (tud_suspended() &&
+        s_usb_suspended.load(std::memory_order_relaxed) &&
+        s_remote_wakeup_allowed.load(std::memory_order_relaxed) &&
+        s_remote_wakeup_pending.load(std::memory_order_relaxed)) {
+        s_remote_wakeup_pending.store(false, std::memory_order_relaxed);
         tud_remote_wakeup();
     }
 
@@ -308,15 +317,15 @@ void usb_pm_poll() {
     bool req_conn = false;
     uint32_t conn_at = 0;
     critical_section_enter_blocking(&s_usb_pm_cs);
-    req_disc = s_usb_req_disconnect;
-    req_conn = s_usb_req_connect;
-    conn_at = s_usb_req_connect_at_us;
+    req_disc = s_usb_req_disconnect.load(std::memory_order_relaxed);
+    req_conn = s_usb_req_connect.load(std::memory_order_relaxed);
+    conn_at = s_usb_req_connect_at_us.load(std::memory_order_relaxed);
     critical_section_exit(&s_usb_pm_cs);
 
     if (req_disc && tud_mounted()) {
         tud_disconnect();
         critical_section_enter_blocking(&s_usb_pm_cs);
-        s_usb_req_disconnect = false;
+        s_usb_req_disconnect.store(false, std::memory_order_relaxed);
         critical_section_exit(&s_usb_pm_cs);
     }
 
@@ -324,19 +333,19 @@ void usb_pm_poll() {
         if (conn_at == 0 || (int32_t)(time_us_32() - conn_at) >= 0) {
             tud_connect();
             critical_section_enter_blocking(&s_usb_pm_cs);
-            s_usb_req_connect = false;
-            s_usb_req_connect_at_us = 0;
+            s_usb_req_connect.store(false, std::memory_order_relaxed);
+            s_usb_req_connect_at_us.store(0, std::memory_order_relaxed);
             critical_section_exit(&s_usb_pm_cs);
         }
     }
 
-    if (!s_disconnect_requested) {
+    if (!s_disconnect_requested.load(std::memory_order_relaxed)) {
         return;
     }
-    s_disconnect_requested = false;
+    s_disconnect_requested.store(false, std::memory_order_relaxed);
 
     // On host suspend, disconnect controller (user expects controller to drop).
-    if (s_usb_suspended) {
+    if (s_usb_suspended.load(std::memory_order_relaxed)) {
         bt_disconnect();
     }
 }
