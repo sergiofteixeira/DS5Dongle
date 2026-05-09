@@ -437,18 +437,12 @@ static void l2cap_packet_handler(uint8_t packet_type, uint16_t channel, uint8_t 
 
                     // If the host is suspended, a controller (re)connect is user activity.
                     // Request remote wakeup.
+                    //
+                    // Note: we intentionally do NOT call tud_connect() here when not suspended.
+                    // This project delays USB enumeration until DSE-vs-DS5 detection completes
+                    // (see init_feature() + 0x70 feature report handling on the control channel).
                     if (tud_suspended()) {
                         usb_remote_wakeup_request();
-                    } else {
-                        // Only expose USB once controller is connected.
-                        // (Matches existing behavior on normal runtime.)
-                        // Note: DSE detection path may call tud_connect() as well.
-                        // Calling twice is fine.
-                        //
-                        // Keep this here so reconnect after suspend also re-enumerates if needed.
-#if !ENABLE_SERIAL
-                        tud_connect();
-#endif
                     }
                 } else {
                     printf("[L2CAP] Unknown Channel psm: 0x%02X", psm);
