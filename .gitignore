@@ -1,4 +1,6 @@
-build
+build*
+artifacts
+pico-sdk
 .vscode
 .idea
 example
