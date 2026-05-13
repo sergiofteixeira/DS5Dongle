@@ -84,6 +84,7 @@ target_compile_definitions(ds5-bridge PRIVATE
         PICO_FLASH_ASSUME_CORE1_SAFE=1
         WDL_RESAMPLE_TYPE=float
         CYW43_PIO_CLOCK_DIV_INT=5
+        CYW43_PIO_CLOCK_DIV_DYNAMIC=1
         PICO_STDIO_USB_USE_DEFAULT_DESCRIPTORS=0
         PICO_STDIO_USB_ENABLE_RESET_VIA_BAUD_RATE=0
         PICO_STDIO_USB_ENABLE_RESET_VIA_VENDOR_INTERFACE=0
@@ -124,4 +125,3 @@ target_link_libraries(ds5-bridge
 )
 
 pico_add_extra_outputs(ds5-bridge)
-

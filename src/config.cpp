@@ -34,14 +34,34 @@ const Config *flash_config() {
 
 void config_valid() {
     const uint16_t old_size = config.size;
-    // valid config and set default value
+    // Validate config and set default values when missing/invalid.
+    bool reset_defaults = false;
     if (config.magic != CONFIG_MAGIC) {
+        reset_defaults = true;
         config.magic = CONFIG_MAGIC;
         printf("[Config] Config Magic Header is invalid\n");
     }
     if (config.version != CONFIG_VERSION) {
+        reset_defaults = true;
         config.version = CONFIG_VERSION;
         printf("[Config] Config Version is invalid\n");
+    }
+
+    if (reset_defaults) {
+        // Flash was uninitialized or incompatible: reset to sane defaults.
+        memset(&config.body, 0, sizeof(config.body));
+        config.body.haptics_gain = 1.0f;
+        config.body.speaker_volume = -100.0f;
+        config.body.inactive_time = 30;
+        config.body.disable_inactive_disconnect = 0;
+        config.body.disable_pico_led = 0;
+        // Default to real-time polling.
+        config.body.polling_rate_mode = 2;
+        config.body.audio_buffer_length = 64;
+        config.body.controller_mode = 2;
+        config.body.enable_remote_wakeup = 1;
+        config.body.wake_on_reconnect = 1;
+        config.body.wake_on_button = 0;
     }
     if (config.size != sizeof(Config_body)) {
         config.size = sizeof(Config_body);
@@ -76,7 +96,7 @@ void config_valid() {
         printf("[Config] disable_pico_led is invalid\n");
     }
     if (body->polling_rate_mode > 2) {
-        body->polling_rate_mode = 0;
+        body->polling_rate_mode = 2;
         printf("[Config] polling_rate_mode is invalid\n");
     }
     if (body->audio_buffer_length < 16 || body->audio_buffer_length > 128) {

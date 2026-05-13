@@ -45,6 +45,8 @@ tinyusb: sdk
 	git -C "$(PICO_SDK_PATH)/lib/tinyusb" checkout --detach "$(TINYUSB_REF)"
 
 configure-standard: submodules tinyusb
+	@# Avoid CMake cache mixing when switching SDK paths
+	@rm -f build/standard/CMakeCache.txt
 	$(CMAKE) -S . -B build/standard -G Ninja \
 	  -DCMAKE_BUILD_TYPE=Release \
 	  -DPICO_SDK_PATH="$(PICO_SDK_PATH)"
@@ -56,6 +58,8 @@ standard: configure-standard build-standard artifacts
 	cp build/standard/ds5-bridge.uf2 artifacts/ds5-bridge.uf2
 
 configure-debug: submodules tinyusb
+	@# Avoid CMake cache mixing when switching SDK paths
+	@rm -f build/debug/CMakeCache.txt
 	$(CMAKE) -S . -B build/debug -G Ninja \
 	  -DCMAKE_BUILD_TYPE=Release \
 	  -DPICO_SDK_PATH="$(PICO_SDK_PATH)" \
@@ -69,6 +73,8 @@ debug: configure-debug build-debug artifacts
 	cp build/debug/ds5-bridge.uf2 artifacts/ds5-bridge-debug.uf2
 
 configure-dse: submodules tinyusb
+	@# Avoid CMake cache mixing when switching SDK paths
+	@rm -f build/dse/CMakeCache.txt
 	$(CMAKE) -S . -B build/dse -G Ninja \
 	  -DCMAKE_BUILD_TYPE=Release \
 	  -DPICO_SDK_PATH="$(PICO_SDK_PATH)" \
